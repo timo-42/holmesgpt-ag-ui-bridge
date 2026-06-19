@@ -12,7 +12,7 @@ BRIDGE_HOLMES_BASE_URL=http://localhost:8080 uv run holmesgpt-ag-ui-bridge
 The AG-UI endpoint is:
 
 ```text
-POST http://localhost:8090/api/agui/chat
+POST http://localhost:8080/api/agui/chat
 ```
 
 ## Configuration
@@ -23,13 +23,13 @@ POST http://localhost:8090/api/agui/chat
 | `BRIDGE_HOLMES_API_KEY` | unset | Optional API key forwarded as `X-API-Key` to HolmesGPT. |
 | `BRIDGE_REQUEST_TIMEOUT_SECONDS` | `300` | Timeout for HolmesGPT requests. |
 | `BRIDGE_HOST` | `0.0.0.0` | Bind host for this bridge. |
-| `BRIDGE_PORT` | `8090` | Bind port for this bridge. |
+| `BRIDGE_PORT` | `8080` | Bind port for this bridge. |
 
 ## Docker
 
 ```bash
 docker build -t holmesgpt-ag-ui-bridge .
-docker run --rm -p 8090:8090 \
+docker run --rm -p 8080:8080 \
   -e BRIDGE_HOLMES_BASE_URL=http://host.docker.internal:8080 \
   holmesgpt-ag-ui-bridge
 ```
