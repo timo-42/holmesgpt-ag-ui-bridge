@@ -14,4 +14,4 @@ RUN uv sync --no-dev
 
 EXPOSE 8080
 
-CMD ["uv", "run", "--no-dev", "holmesgpt-ag-ui-bridge"]
+CMD ["uv", "run", "--no-dev", "holmesgpt-ag-ui-bridge", "agui-to-holmes"]

@@ -7,6 +7,13 @@ class Settings(BaseSettings):
 
     holmes_base_url: str = Field(default="http://localhost:8080")
     holmes_api_key: str | None = Field(default=None)
+    openai_base_url: str = Field(default="https://api.openai.com")
+    openai_api_key: str | None = Field(default=None)
+    openai_model: str = Field(default="gpt-4.1-mini")
+    openai_surface: str = Field(default="responses")
+    agui_url: str = Field(default="http://localhost:8080/api/agui/chat")
+    agui_api_key: str | None = Field(default=None)
+    openai_compat_api_key: str | None = Field(default=None)
     request_timeout_seconds: float = Field(default=300.0)
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
 
