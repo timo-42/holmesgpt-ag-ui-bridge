@@ -1,0 +1,31 @@
+[project]
+name = "holmesgpt-ag-ui-bridge"
+version = "0.1.0"
+description = "HTTP proxy that exposes HolmesGPT /api/chat as an AG-UI endpoint."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ag-ui-protocol>=0.1.19",
+    "fastapi>=0.115.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+holmesgpt-ag-ui-bridge = "holmesgpt_ag_ui_bridge.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
