@@ -6,13 +6,25 @@ Python HTTP proxy that exposes HolmesGPT's stable `/api/chat` endpoint as an AG-
 
 ```bash
 uv sync
-BRIDGE_HOLMES_BASE_URL=http://localhost:8080 uv run holmesgpt-ag-ui-bridge
+uv run holmesgpt-ag-ui-bridge
 ```
 
 The AG-UI endpoint is:
 
 ```text
 POST http://localhost:8080/api/agui/chat
+```
+
+If HolmesGPT is also running on `localhost:8080`, run one process on a different port. For example, keep HolmesGPT on `8080` and run the bridge on `8090`:
+
+```bash
+BRIDGE_PORT=8090 BRIDGE_HOLMES_BASE_URL=http://localhost:8080 uv run holmesgpt-ag-ui-bridge
+```
+
+Or keep the bridge on `8080` and point it at a HolmesGPT server on another port:
+
+```bash
+BRIDGE_HOLMES_BASE_URL=http://localhost:18080 uv run holmesgpt-ag-ui-bridge
 ```
 
 ## Configuration
