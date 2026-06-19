@@ -39,6 +39,22 @@ BRIDGE_HOLMES_BASE_URL=http://localhost:18080 uv run holmesgpt-ag-ui-bridge
 
 ## Docker
 
+Prebuilt multi-arch images are published to Docker Hub:
+
+```text
+https://hub.docker.com/r/kenobi42/holmesgpt-ag-ui-bridge
+```
+
+Run the published image:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e BRIDGE_HOLMES_BASE_URL=http://host.docker.internal:8080 \
+  kenobi42/holmesgpt-ag-ui-bridge:latest
+```
+
+Or build locally:
+
 ```bash
 docker build -t holmesgpt-ag-ui-bridge .
 docker run --rm -p 8080:8080 \
