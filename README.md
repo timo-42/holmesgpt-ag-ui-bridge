@@ -91,13 +91,21 @@ docker run --rm -p 8080:8080 \
   kenobi42/holmesgpt-ag-ui-bridge:latest
 ```
 
+The image runs as a non-root user by default and supports read-only container filesystems:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp -p 8080:8080 \
+  -e BRIDGE_HOLMES_BASE_URL=http://host.docker.internal:8080 \
+  kenobi42/holmesgpt-ag-ui-bridge:latest
+```
+
 Run an OpenAI adapter from the same image by overriding the command:
 
 ```bash
 docker run --rm -p 8080:8080 \
   -e OPENAI_API_KEY=... \
   kenobi42/holmesgpt-ag-ui-bridge:latest \
-  uv run --no-dev holmesgpt-ag-ui-bridge agui-to-openai
+  holmesgpt-ag-ui-bridge agui-to-openai
 ```
 
 Or build locally:
