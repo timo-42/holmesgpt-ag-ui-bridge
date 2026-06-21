@@ -6,16 +6,29 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ag_ui.core import (
+    ActivityDeltaEvent,
+    ActivitySnapshotEvent,
     EventType,
+    Interrupt,
+    RawEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
+    RunFinishedInterruptOutcome,
     RunStartedEvent,
+    StateDeltaEvent,
+    StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
+    ToolCallResultEvent,
     ToolCallStartEvent,
 )
 from ag_ui.encoder import EventEncoder
@@ -66,6 +79,16 @@ def agui_to_holmes_chat(input_data: RunAgentInput) -> dict[str, Any]:
     if frontend_tool_results:
         payload["frontend_tool_results"] = frontend_tool_results
 
+    if input_data.resume:
+        resume_entries = [
+            entry.model_dump(mode="json", by_alias=False, exclude_none=True)
+            for entry in input_data.resume
+        ]
+        payload["resume"] = resume_entries
+        payload["tool_decisions"] = [
+            _resume_entry_to_tool_decision(entry) for entry in input_data.resume
+        ]
+
     state = input_data.state if isinstance(input_data.state, dict) else {}
     forwarded_props = (
         input_data.forwarded_props if isinstance(input_data.forwarded_props, dict) else {}
@@ -109,6 +132,7 @@ async def holmes_to_agui_events(
 
     message_id = str(uuid.uuid4())
     text_started = False
+    reasoning_message_id: str | None = None
 
     async for holmes_event in holmes_events:
         event_type = holmes_event.event
@@ -132,7 +156,9 @@ async def holmes_to_agui_events(
             continue
 
         if event_type == "start_tool_calling":
+            parent_message_id = _tool_parent_message_id(data)
             if text_started:
+                parent_message_id = parent_message_id or message_id
                 yield TextMessageEndEvent(
                     type=EventType.TEXT_MESSAGE_END,
                     message_id=message_id,
@@ -144,6 +170,7 @@ async def holmes_to_agui_events(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call_id,
                 tool_call_name=_tool_name(data),
+                parent_message_id=parent_message_id,
             )
             args = data.get("params") or data.get("arguments") or data.get("input")
             if args is not None:
@@ -155,9 +182,19 @@ async def holmes_to_agui_events(
             continue
 
         if event_type == "tool_calling_result":
+            tool_call_id = _tool_call_id(data)
+            result_content = _tool_result_content(data)
+            if result_content is not None:
+                yield ToolCallResultEvent(
+                    type=EventType.TOOL_CALL_RESULT,
+                    message_id=_tool_result_message_id(data),
+                    tool_call_id=tool_call_id,
+                    content=result_content,
+                    role="tool",
+                )
             yield ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
-                tool_call_id=_tool_call_id(data),
+                tool_call_id=tool_call_id,
             )
             continue
 
@@ -169,11 +206,12 @@ async def holmes_to_agui_events(
                 )
                 text_started = False
             for call in data.get("pending_frontend_tool_calls") or []:
-                tool_call_id = str(call.get("tool_call_id") or call.get("id") or uuid.uuid4())
+                tool_call_id = _tool_call_id(call)
                 yield ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
                     tool_call_id=tool_call_id,
                     tool_call_name=str(call.get("tool_name") or call.get("name") or "frontend_tool"),
+                    parent_message_id=_tool_parent_message_id(call),
                 )
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
@@ -189,6 +227,13 @@ async def holmes_to_agui_events(
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
                 result=data,
+                outcome=RunFinishedInterruptOutcome(
+                    interrupts=[
+                        _frontend_tool_call_to_interrupt(call)
+                        for call in data.get("pending_frontend_tool_calls") or []
+                    ]
+                    or [_event_to_interrupt(data)]
+                ),
             )
             return
 
@@ -204,6 +249,98 @@ async def holmes_to_agui_events(
                 code=str(data.get("error_code")) if data.get("error_code") is not None else None,
             )
             return
+
+        if event_type in {"state_snapshot", "state"} and "state" in data:
+            yield StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=data["state"],
+                raw_event={"event": event_type, "data": data},
+            )
+            continue
+
+        if event_type == "state_delta" and "delta" in data:
+            yield StateDeltaEvent(
+                type=EventType.STATE_DELTA,
+                delta=data["delta"],
+                raw_event={"event": event_type, "data": data},
+            )
+            continue
+
+        if event_type in {"activity_snapshot", "activity"} and "content" in data:
+            yield ActivitySnapshotEvent(
+                type=EventType.ACTIVITY_SNAPSHOT,
+                message_id=_event_message_id(data),
+                activity_type=str(data.get("activity_type") or data.get("activityType") or "activity"),
+                content=data["content"],
+                replace=bool(data.get("replace", True)),
+                raw_event={"event": event_type, "data": data},
+            )
+            continue
+
+        if event_type == "activity_delta" and "patch" in data:
+            yield ActivityDeltaEvent(
+                type=EventType.ACTIVITY_DELTA,
+                message_id=_event_message_id(data),
+                activity_type=str(data.get("activity_type") or data.get("activityType") or "activity"),
+                patch=data["patch"],
+                raw_event={"event": event_type, "data": data},
+            )
+            continue
+
+        if event_type in {"reasoning_start", "thinking_start"}:
+            reasoning_message_id = _event_message_id(data)
+            yield ReasoningStartEvent(
+                type=EventType.REASONING_START,
+                message_id=reasoning_message_id,
+                raw_event={"event": event_type, "data": data},
+            )
+            yield ReasoningMessageStartEvent(
+                type=EventType.REASONING_MESSAGE_START,
+                message_id=reasoning_message_id,
+                role="reasoning",
+                raw_event={"event": event_type, "data": data},
+            )
+            continue
+
+        if event_type in {"reasoning_message", "reasoning_delta", "thinking_delta"}:
+            content = str(data.get("content") or data.get("delta") or data.get("analysis") or "")
+            if content:
+                if reasoning_message_id is None:
+                    reasoning_message_id = _event_message_id(data)
+                    yield ReasoningMessageStartEvent(
+                        type=EventType.REASONING_MESSAGE_START,
+                        message_id=reasoning_message_id,
+                        role="reasoning",
+                        raw_event={"event": event_type, "data": data},
+                    )
+                yield ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT,
+                    message_id=reasoning_message_id,
+                    delta=content,
+                    raw_event={"event": event_type, "data": data},
+                )
+            continue
+
+        if event_type in {"reasoning_end", "thinking_end"}:
+            if reasoning_message_id is not None:
+                yield ReasoningMessageEndEvent(
+                    type=EventType.REASONING_MESSAGE_END,
+                    message_id=reasoning_message_id,
+                    raw_event={"event": event_type, "data": data},
+                )
+                yield ReasoningEndEvent(
+                    type=EventType.REASONING_END,
+                    message_id=reasoning_message_id,
+                    raw_event={"event": event_type, "data": data},
+                )
+                reasoning_message_id = None
+            continue
+
+        yield RawEvent(
+            type=EventType.RAW,
+            event={"event": event_type, "data": data},
+            source="holmes",
+        )
 
     if text_started:
         yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
@@ -232,6 +369,12 @@ def _build_conversation_history(messages: list[Any], input_data: RunAgentInput) 
             history.append({"role": role, "content": _message_text(message)})
         elif role == "tool":
             history.append({"role": "assistant", "content": _message_text(message)})
+        elif role == "activity":
+            activity_type = getattr(message, "activity_type", "activity")
+            content = json.dumps(getattr(message, "content", {}), separators=(",", ":"))
+            history.append({"role": "system", "content": f"activity:{activity_type}: {content}"})
+        elif role == "reasoning":
+            history.append({"role": "system", "content": f"reasoning: {_message_text(message)}"})
 
     return [item for item in history if item["content"]]
 
@@ -267,6 +410,10 @@ def _message_text(message: Any) -> str:
                 value = getattr(source, "value", "") if source else ""
                 if value:
                     parts.append(f"[image: {value}]")
+            elif part_type in {"audio", "video", "document"}:
+                parts.append(_sourced_attachment_text(part, str(part_type)))
+            elif part_type == "binary":
+                parts.append(_binary_attachment_text(part))
             elif part_type:
                 parts.append(f"[{part_type} attachment]")
         return "\n".join(part for part in parts if part).strip()
@@ -324,18 +471,141 @@ def _tool_call_names(messages: list[Any]) -> dict[str, str]:
 
 def _tool_message_to_result(message: Any, tool_names: dict[str, str]) -> dict[str, Any]:
     tool_call_id = message.tool_call_id
-    return {
+    result = {
         "tool_call_id": tool_call_id,
         "tool_name": getattr(message, "name", None)
         or tool_names.get(str(tool_call_id))
         or "frontend_tool",
         "result": _message_text(message),
     }
+    error = getattr(message, "error", None)
+    if error:
+        result["error"] = str(error)
+    return result
 
 
 def _tool_call_id(data: dict[str, Any]) -> str:
-    return str(data.get("tool_call_id") or data.get("id") or uuid.uuid4())
+    nested_call = data.get("tool_call") if isinstance(data.get("tool_call"), dict) else {}
+    return str(
+        data.get("tool_call_id")
+        or data.get("toolCallId")
+        or data.get("call_id")
+        or data.get("callId")
+        or nested_call.get("tool_call_id")
+        or nested_call.get("toolCallId")
+        or nested_call.get("id")
+        or data.get("id")
+        or uuid.uuid4()
+    )
 
 
 def _tool_name(data: dict[str, Any]) -> str:
     return str(data.get("tool_name") or data.get("name") or "tool")
+
+
+def _tool_parent_message_id(data: dict[str, Any]) -> str | None:
+    value = data.get("parent_message_id") or data.get("parentMessageId") or data.get("message_id") or data.get("messageId")
+    return str(value) if value else None
+
+
+def _tool_result_message_id(data: dict[str, Any]) -> str:
+    return str(
+        data.get("message_id")
+        or data.get("messageId")
+        or data.get("tool_message_id")
+        or data.get("toolMessageId")
+        or data.get("result_id")
+        or data.get("resultId")
+        or uuid.uuid4()
+    )
+
+
+def _tool_result_content(data: dict[str, Any]) -> str | None:
+    for key in ("result", "output", "content", "data", "error"):
+        if key not in data:
+            continue
+        value = data[key]
+        if value is None:
+            continue
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, separators=(",", ":"))
+    return None
+
+
+def _resume_entry_to_tool_decision(entry: Any) -> dict[str, Any]:
+    payload = getattr(entry, "payload", None)
+    approved = getattr(entry, "status", None) == "resolved"
+    if isinstance(payload, dict) and "approved" in payload:
+        approved = bool(payload["approved"])
+    return {
+        "interrupt_id": entry.interrupt_id,
+        "tool_call_id": entry.interrupt_id,
+        "status": entry.status,
+        "approved": approved,
+        "payload": payload,
+    }
+
+
+def _frontend_tool_call_to_interrupt(call: dict[str, Any]) -> Interrupt:
+    tool_call_id = _tool_call_id(call)
+    interrupt_id = str(call.get("interrupt_id") or call.get("interruptId") or tool_call_id)
+    metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {"tool_call": call}
+    return Interrupt(
+        id=interrupt_id,
+        reason=str(call.get("reason") or "tool_approval"),
+        message=str(
+            call.get("message")
+            or call.get("description")
+            or f"Approval required for {call.get('tool_name') or call.get('name') or 'frontend_tool'}"
+        ),
+        tool_call_id=tool_call_id,
+        response_schema=call.get("response_schema") or call.get("responseSchema") or call.get("schema"),
+        expires_at=call.get("expires_at") or call.get("expiresAt"),
+        metadata=metadata,
+    )
+
+
+def _event_to_interrupt(data: dict[str, Any]) -> Interrupt:
+    interrupt_id = str(data.get("interrupt_id") or data.get("interruptId") or data.get("id") or uuid.uuid4())
+    return Interrupt(
+        id=interrupt_id,
+        reason=str(data.get("reason") or "approval_required"),
+        message=str(data.get("message") or data.get("description") or "Approval required"),
+        response_schema=data.get("response_schema") or data.get("responseSchema") or data.get("schema"),
+        expires_at=data.get("expires_at") or data.get("expiresAt"),
+        metadata={"event": data},
+    )
+
+
+def _event_message_id(data: dict[str, Any]) -> str:
+    return str(data.get("message_id") or data.get("messageId") or data.get("id") or uuid.uuid4())
+
+
+def _sourced_attachment_text(part: Any, part_type: str) -> str:
+    source = getattr(part, "source", None)
+    if source is None:
+        return f"[{part_type} attachment]"
+    source_type = getattr(source, "type", None)
+    value = getattr(source, "value", None)
+    mime_type = getattr(source, "mime_type", None)
+    label = mime_type or part_type
+    if source_type == "url" and value:
+        return f"[{part_type}: {value} ({label})]"
+    if source_type == "data":
+        return f"[{part_type}: inline {label}]"
+    return f"[{part_type} attachment]"
+
+
+def _binary_attachment_text(part: Any) -> str:
+    mime_type = getattr(part, "mime_type", "binary")
+    filename = getattr(part, "filename", None)
+    url = getattr(part, "url", None)
+    identifier = getattr(part, "id", None)
+    if url:
+        return f"[binary: {url} ({mime_type})]"
+    if filename:
+        return f"[binary: {filename} ({mime_type})]"
+    if identifier:
+        return f"[binary: {identifier} ({mime_type})]"
+    return f"[binary: inline {mime_type}]"

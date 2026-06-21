@@ -18,13 +18,13 @@ POST http://localhost:8080/api/agui/chat
 If HolmesGPT is also running on `localhost:8080`, run one process on a different port. For example, keep HolmesGPT on `8080` and run the bridge on `8090`:
 
 ```bash
-BRIDGE_PORT=8090 BRIDGE_HOLMES_BASE_URL=http://localhost:8080 uv run holmesgpt-ag-ui-bridge
+BRIDGE_PORT=8090 BRIDGE_HOLMES_BASE_URL=http://localhost:8080 uv run holmesgpt-ag-ui-bridge agui-to-holmes
 ```
 
 Or keep the bridge on `8080` and point it at a HolmesGPT server on another port:
 
 ```bash
-BRIDGE_HOLMES_BASE_URL=http://localhost:18080 uv run holmesgpt-ag-ui-bridge
+BRIDGE_HOLMES_BASE_URL=http://localhost:18080 uv run holmesgpt-ag-ui-bridge agui-to-holmes
 ```
 
 ## Configuration
@@ -120,3 +120,5 @@ docker run --rm -p 8080:8080 \
 ## Behavior
 
 The bridge uses the official `ag-ui-protocol` Python package for AG-UI request and event models. It can translate AG-UI to HolmesGPT, AG-UI to OpenAI-compatible APIs, and OpenAI-compatible Chat Completions or Responses requests back to AG-UI. Streaming text and function/tool call events are translated between protocols.
+
+For HolmesGPT, frontend tool approval pauses are exposed as AG-UI interrupt outcomes and later `resume` entries are forwarded back as Holmes tool decisions. Holmes state, activity, and reasoning events are mapped to AG-UI events when their payloads match AG-UI fields; otherwise Holmes-specific events are preserved as `RAW` passthrough events.
