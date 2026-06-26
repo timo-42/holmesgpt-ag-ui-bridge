@@ -11,7 +11,7 @@ COPY holmesgpt_ag_ui_bridge ./holmesgpt_ag_ui_bridge
 
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
